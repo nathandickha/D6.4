@@ -2137,105 +2137,218 @@ function updateGroundMaterialSpaClip(ground, spaGroup = null, poolGroup = null) 
 
 
 function createProceduralGrassTexture(renderer) {
-  const size = 512;
+  const size = 1024;
   const canvas = document.createElement('canvas');
   canvas.width = size;
   canvas.height = size;
   const ctx = canvas.getContext('2d', { alpha: false });
 
-  const image = ctx.createImageData(size, size);
-  const data = image.data;
-  let seed = 918273645;
+  let seed = 0x67a93d1;
   const rand = () => {
     seed = (1664525 * seed + 1013904223) >>> 0;
     return seed / 4294967296;
   };
 
-  for (let y = 0; y < size; y++) {
-    for (let x = 0; x < size; x++) {
-      const i = (y * size + x) * 4;
-      const broad = Math.sin(x * 0.035) * 5 + Math.cos(y * 0.041) * 4;
-      const fine = (rand() - 0.5) * 22;
-      const r = 66 + broad + fine * 0.35;
-      const g = 102 + broad * 1.3 + fine;
-      const b = 49 + broad * 0.45 + fine * 0.22;
-      data[i] = Math.max(0, Math.min(255, r));
-      data[i + 1] = Math.max(0, Math.min(255, g));
-      data[i + 2] = Math.max(0, Math.min(255, b));
-      data[i + 3] = 255;
-    }
+  // Natural muted lawn base.
+  ctx.fillStyle = '#78945f';
+  ctx.fillRect(0, 0, size, size);
+
+  // Broad irregular colour patches, similar to mown lawn variation.
+  for (let i = 0; i < 260; i++) {
+    const x = rand() * size;
+    const y = rand() * size;
+    const radius = 24 + rand() * 110;
+    const gradient = ctx.createRadialGradient(x, y, 0, x, y, radius);
+
+    const tone = rand();
+    const centre = tone < 0.48
+      ? 'rgba(56,92,42,0.18)'
+      : tone < 0.82
+        ? 'rgba(142,166,91,0.18)'
+        : 'rgba(150,133,78,0.10)';
+
+    gradient.addColorStop(0, centre);
+    gradient.addColorStop(1, 'rgba(110,140,75,0)');
+    ctx.fillStyle = gradient;
+    ctx.fillRect(x - radius, y - radius, radius * 2, radius * 2);
+  }
+
+  // Fine mottled turf noise.
+  const image = ctx.getImageData(0, 0, size, size);
+  const data = image.data;
+  for (let i = 0; i < data.length; i += 4) {
+    const variation = (rand() - 0.5) * 17;
+    data[i] = Math.max(0, Math.min(255, data[i] + variation * 0.55));
+    data[i + 1] = Math.max(0, Math.min(255, data[i + 1] + variation));
+    data[i + 2] = Math.max(0, Math.min(255, data[i + 2] + variation * 0.35));
   }
   ctx.putImageData(image, 0, 0);
 
-  // Fine blades and small colour variation, kept subtle to avoid moire.
-  ctx.globalAlpha = 0.28;
-  for (let i = 0; i < 9500; i++) {
+  // Dense, short directional fibres. These provide continuous grass detail in
+  // the distance without requiring millions of geometry blades.
+  ctx.lineCap = 'round';
+  for (let i = 0; i < 42000; i++) {
     const x = rand() * size;
     const y = rand() * size;
-    const length = 1 + rand() * 3.5;
-    ctx.strokeStyle = rand() > 0.48 ? 'rgb(104,135,70)' : 'rgb(39,76,35)';
+    const length = 1.2 + rand() * 5.2;
+    const lean = (rand() - 0.5) * 2.4;
+    const alpha = 0.05 + rand() * 0.13;
+
+    ctx.strokeStyle = rand() < 0.55
+      ? `rgba(42,82,36,${alpha})`
+      : `rgba(155,177,101,${alpha * 0.8})`;
+    ctx.lineWidth = 0.45 + rand() * 0.75;
     ctx.beginPath();
     ctx.moveTo(x, y);
-    ctx.lineTo(x + (rand() - 0.5) * 1.4, y - length);
+    ctx.lineTo(x + lean, y - length);
     ctx.stroke();
   }
-  ctx.globalAlpha = 1;
 
   const texture = new THREE.CanvasTexture(canvas);
-  texture.name = 'Procedural grass ground';
+  texture.name = 'Layered procedural lawn';
   texture.colorSpace = THREE.SRGBColorSpace;
   texture.wrapS = THREE.RepeatWrapping;
   texture.wrapT = THREE.RepeatWrapping;
-  texture.repeat.set(0.42, 0.42); // ShapeGeometry UVs are world-position based.
+
+  // ShapeGeometry UVs are based on world coordinates. This repeat creates
+  // turf-scale detail while avoiding visible tile repetition.
+  texture.repeat.set(0.19, 0.19);
   texture.minFilter = THREE.LinearMipmapLinearFilter;
   texture.magFilter = THREE.LinearFilter;
   texture.generateMipmaps = true;
-  texture.anisotropy = Math.min(8, renderer?.capabilities?.getMaxAnisotropy?.() || 1);
+  texture.anisotropy = Math.min(
+    8,
+    renderer?.capabilities?.getMaxAnisotropy?.() || 1
+  );
   texture.needsUpdate = true;
   return texture;
 }
 
+function createGrassTuftTexture() {
+  const width = 256;
+  const height = 256;
+  const canvas = document.createElement('canvas');
+  canvas.width = width;
+  canvas.height = height;
+  const ctx = canvas.getContext('2d');
 
-const GRASS_PAVING_HARD_CLEARANCE = 0.16;
-const GRASS_PAVING_FADE_DISTANCE = 1.05;
-const GRASS_MAX_HEIGHT = 0.085;
+  ctx.clearRect(0, 0, width, height);
+  ctx.lineCap = 'round';
+
+  let seed = 0x91c7f2;
+  const rand = () => {
+    seed = (1664525 * seed + 1013904223) >>> 0;
+    return seed / 4294967296;
+  };
+
+  // Draw many fine curved blades into one soft tuft card.
+  for (let i = 0; i < 34; i++) {
+    const baseX = width * (0.34 + rand() * 0.32);
+    const baseY = height * 0.96;
+    const bladeHeight = height * (0.34 + rand() * 0.57);
+    const tipX = baseX + (rand() - 0.5) * width * 0.36;
+    const controlX = baseX + (rand() - 0.5) * width * 0.20;
+    const controlY = baseY - bladeHeight * (0.42 + rand() * 0.22);
+
+    const green = 105 + Math.round(rand() * 70);
+    const red = 48 + Math.round(rand() * 45);
+    const blue = 38 + Math.round(rand() * 30);
+    ctx.strokeStyle = `rgba(${red},${green},${blue},${0.46 + rand() * 0.42})`;
+    ctx.lineWidth = 1.1 + rand() * 2.2;
+
+    ctx.beginPath();
+    ctx.moveTo(baseX, baseY);
+    ctx.quadraticCurveTo(controlX, controlY, tipX, baseY - bladeHeight);
+    ctx.stroke();
+  }
+
+  // Soft base to visually join the blades to the textured ground.
+  const baseGradient = ctx.createRadialGradient(
+    width * 0.5, height * 0.93, 0,
+    width * 0.5, height * 0.93, width * 0.24
+  );
+  baseGradient.addColorStop(0, 'rgba(61,104,46,0.42)');
+  baseGradient.addColorStop(1, 'rgba(61,104,46,0)');
+  ctx.fillStyle = baseGradient;
+  ctx.fillRect(0, height * 0.73, width, height * 0.27);
+
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.name = 'Soft grass tuft';
+  texture.colorSpace = THREE.SRGBColorSpace;
+  texture.minFilter = THREE.LinearMipmapLinearFilter;
+  texture.magFilter = THREE.LinearFilter;
+  texture.generateMipmaps = true;
+  texture.needsUpdate = true;
+  return texture;
+}
+
+const GRASS_PAVING_HARD_CLEARANCE = 0.22;
+const GRASS_PAVING_FADE_DISTANCE = 1.35;
+const GRASS_TUFT_BASE_WIDTH = 0.18;
+const GRASS_TUFT_BASE_HEIGHT = 0.24;
 let sharedGrassBladeGeometry = null;
 let sharedGrassBladeMaterial = null;
 
 function getGrassBladeResources() {
   if (!sharedGrassBladeGeometry) {
-    // One instance is a small tuft made from three crossed tapered blades.
-    // Crossed planes read as grass from every camera angle without requiring
-    // thousands of shadow-casting meshes or expensive alpha textures.
+    // Two crossed alpha-cut cards create a soft tuft from every viewing angle.
+    // The texture contains dozens of fine curved blades, so instances no longer
+    // resemble isolated triangles or spikes.
+    const halfWidth = GRASS_TUFT_BASE_WIDTH * 0.5;
+    const height = GRASS_TUFT_BASE_HEIGHT;
     const positions = [];
-    const bladeAngles = [0, Math.PI / 3, Math.PI * 2 / 3];
+    const uvs = [];
+    const indices = [];
 
-    for (const angle of bladeAngles) {
-      const halfWidth = 0.007;
-      const height = GRASS_MAX_HEIGHT;
+    const addCard = (angle) => {
+      const base = positions.length / 3;
       const dx = Math.cos(angle) * halfWidth;
       const dy = Math.sin(angle) * halfWidth;
 
       positions.push(
         -dx, -dy, 0,
          dx,  dy, 0,
-         0,   0,  height
+         dx,  dy, height,
+        -dx, -dy, height
       );
-    }
+
+      uvs.push(
+        0, 0,
+        1, 0,
+        1, 1,
+        0, 1
+      );
+
+      indices.push(
+        base, base + 1, base + 2,
+        base, base + 2, base + 3
+      );
+    };
+
+    addCard(0);
+    addCard(Math.PI * 0.5);
 
     sharedGrassBladeGeometry = new THREE.BufferGeometry();
     sharedGrassBladeGeometry.setAttribute(
       'position',
       new THREE.Float32BufferAttribute(positions, 3)
     );
+    sharedGrassBladeGeometry.setAttribute(
+      'uv',
+      new THREE.Float32BufferAttribute(uvs, 2)
+    );
+    sharedGrassBladeGeometry.setIndex(indices);
     sharedGrassBladeGeometry.computeBoundingSphere();
   }
 
   if (!sharedGrassBladeMaterial) {
-    // An unlit material prevents the near-black spikes produced when narrow
-    // vertical triangles face away from the directional light.
+    const tuftTexture = createGrassTuftTexture();
+
     sharedGrassBladeMaterial = new THREE.MeshBasicMaterial({
-      color: 0xffffff,
+      map: tuftTexture,
+      alphaTest: 0.24,
+      transparent: false,
+      depthWrite: true,
       side: THREE.DoubleSide,
       vertexColors: true,
       toneMapped: true,
@@ -2310,7 +2423,10 @@ function rebuildGrassBlades(ground, poolGroup, spaGroup = null) {
 
   // Tufts contain three blades each, so this is visually denser than the old
   // single-spike count while using fewer instances and draw overhead.
-  const requestedCount = isMobile ? 850 : 2200;
+  const groundArea = Math.PI * radius * radius;
+  const requestedCount = isMobile
+    ? Math.min(5200, Math.max(2400, Math.round(groundArea * 1.05)))
+    : Math.min(18000, Math.max(7500, Math.round(groundArea * 2.15)));
   const pavingOuter = ground.userData?.poolPavingMesh?.userData?.outerFootprint || [];
 
   let spaBounds = null;
@@ -2380,20 +2496,22 @@ function rebuildGrassBlades(ground, poolGroup, spaGroup = null) {
   blades.renderOrder = 1;
 
   const dummy = new THREE.Object3D();
-  const baseColour = new THREE.Color(0x78965f);
-  const darkColour = new THREE.Color(0x587647);
-  const lightColour = new THREE.Color(0x91aa75);
-  const dryColour = new THREE.Color(0x84916a);
+  const baseColour = new THREE.Color(0x86a766);
+  const darkColour = new THREE.Color(0x5f844c);
+  const lightColour = new THREE.Color(0xa2bf78);
+  const dryColour = new THREE.Color(0xa39b67);
   const colour = new THREE.Color();
 
   placements.forEach((item, index) => {
-    // Short lawn-like tufts: approximately 35–80 mm tall.
-    const heightScale = 0.42 + item.randA * 0.52;
-    const widthScale = 0.72 + item.randB * 0.42;
-    const lean = (item.randD - 0.5) * 0.16;
+    // Soft lawn clumps approximately 80–220 mm tall. Most instances
+    // remain short; occasional taller tufts break up the silhouette naturally.
+    const tallBias = Math.pow(item.randA, 2.6);
+    const heightScale = 0.34 + tallBias * 0.58;
+    const widthScale = 0.58 + item.randB * 0.52;
+    const lean = (item.randD - 0.5) * 0.08;
 
-    dummy.position.set(item.x, item.y, ground.position.z + 0.004);
-    dummy.rotation.set(lean, lean * 0.6, item.randC * Math.PI * 2);
+    dummy.position.set(item.x, item.y, ground.position.z + 0.006);
+    dummy.rotation.set(lean, lean * 0.45, item.randC * Math.PI * 2);
     dummy.scale.set(widthScale, widthScale, heightScale);
     dummy.updateMatrix();
     blades.setMatrixAt(index, dummy.matrix);
@@ -2570,11 +2688,13 @@ export async function initScene() {
   // Ground material: Studio floor (neutral, slightly rough)
   // Keep this mesh stable: updateGroundVoid() will replace the geometry to cut the pool footprint hole.
   // -------------------------
+  const grassGroundTexture = createProceduralGrassTexture(renderer);
   const groundMat = new THREE.MeshStandardMaterial({
-    color: 0x708b58,
-    roughness: 0.96,
+    color: 0xd5dfbe,
+    map: grassGroundTexture,
+    roughness: 0.98,
     metalness: 0.0,
-    envMapIntensity: 0.14,
+    envMapIntensity: 0.12,
     transparent: true,
     alphaTest: 0.015,
     depthWrite: true
@@ -3309,8 +3429,15 @@ export function updatePoolWaterVoid(poolGroup, spaGroup) {
 // Rebuild grass overlay after pool rebuild
 // --------------------------------------------------------
 export function updateGrassForPool(scene, poolGroup) {
-  // Instanced grass removed — keep function for compatibility with PoolApp
-  return;
+  const ground = scene?.userData?.ground;
+  if (!ground || !poolGroup) return;
+
+  const spaGroup =
+    scene.getObjectByName?.('SpaGroup') ||
+    scene.getObjectByName?.('Spa') ||
+    null;
+
+  rebuildGrassBlades(ground, poolGroup, spaGroup);
 }
 // OPTION A: joined coping
 
