@@ -2196,35 +2196,50 @@ function createProceduralGrassTexture(renderer) {
 }
 
 
-const GRASS_BLADE_MARGIN = 0.22;
-const GRASS_BLADE_HEIGHT = 0.14;
+const GRASS_PAVING_HARD_CLEARANCE = 0.16;
+const GRASS_PAVING_FADE_DISTANCE = 1.05;
+const GRASS_MAX_HEIGHT = 0.085;
 let sharedGrassBladeGeometry = null;
 let sharedGrassBladeMaterial = null;
 
 function getGrassBladeResources() {
   if (!sharedGrassBladeGeometry) {
-    // A tapered vertical triangle in the X/Z plane. Each instance rotates
-    // around world Z, producing a lightweight natural-looking lawn.
+    // One instance is a small tuft made from three crossed tapered blades.
+    // Crossed planes read as grass from every camera angle without requiring
+    // thousands of shadow-casting meshes or expensive alpha textures.
+    const positions = [];
+    const bladeAngles = [0, Math.PI / 3, Math.PI * 2 / 3];
+
+    for (const angle of bladeAngles) {
+      const halfWidth = 0.007;
+      const height = GRASS_MAX_HEIGHT;
+      const dx = Math.cos(angle) * halfWidth;
+      const dy = Math.sin(angle) * halfWidth;
+
+      positions.push(
+        -dx, -dy, 0,
+         dx,  dy, 0,
+         0,   0,  height
+      );
+    }
+
     sharedGrassBladeGeometry = new THREE.BufferGeometry();
     sharedGrassBladeGeometry.setAttribute(
       'position',
-      new THREE.Float32BufferAttribute([
-        -0.015, 0, 0,
-         0.015, 0, 0,
-         0.000, 0, GRASS_BLADE_HEIGHT
-      ], 3)
+      new THREE.Float32BufferAttribute(positions, 3)
     );
-    sharedGrassBladeGeometry.computeVertexNormals();
+    sharedGrassBladeGeometry.computeBoundingSphere();
   }
 
   if (!sharedGrassBladeMaterial) {
-    sharedGrassBladeMaterial = new THREE.MeshStandardMaterial({
+    // An unlit material prevents the near-black spikes produced when narrow
+    // vertical triangles face away from the directional light.
+    sharedGrassBladeMaterial = new THREE.MeshBasicMaterial({
       color: 0xffffff,
-      roughness: 1.0,
-      metalness: 0.0,
       side: THREE.DoubleSide,
       vertexColors: true,
-      envMapIntensity: 0.12
+      toneMapped: true,
+      fog: true
     });
   }
 
@@ -2246,7 +2261,40 @@ function removeGrassBlades(ground) {
   const blades = ground?.userData?.grassBlades;
   if (!blades) return;
   blades.parent?.remove(blades);
+  blades.dispose?.();
   ground.userData.grassBlades = null;
+}
+
+function pointInsidePolygon2D(x, y, polygon) {
+  let inside = false;
+  for (let i = 0, j = polygon.length - 1; i < polygon.length; j = i++) {
+    const a = polygon[i];
+    const b = polygon[j];
+    const intersects = ((a.y > y) !== (b.y > y)) &&
+      (x < (b.x - a.x) * (y - a.y) / ((b.y - a.y) || 1e-9) + a.x);
+    if (intersects) inside = !inside;
+  }
+  return inside;
+}
+
+function distanceToPolygonEdges2D(x, y, polygon) {
+  let minDistanceSq = Infinity;
+  for (let i = 0; i < polygon.length; i++) {
+    const a = polygon[i];
+    const b = polygon[(i + 1) % polygon.length];
+    const abX = b.x - a.x;
+    const abY = b.y - a.y;
+    const lengthSq = abX * abX + abY * abY;
+    const t = lengthSq > 1e-9
+      ? THREE.MathUtils.clamp(((x - a.x) * abX + (y - a.y) * abY) / lengthSq, 0, 1)
+      : 0;
+    const closestX = a.x + abX * t;
+    const closestY = a.y + abY * t;
+    const dx = x - closestX;
+    const dy = y - closestY;
+    minDistanceSq = Math.min(minDistanceSq, dx * dx + dy * dy);
+  }
+  return Math.sqrt(minDistanceSq);
 }
 
 function rebuildGrassBlades(ground, poolGroup, spaGroup = null) {
@@ -2256,32 +2304,29 @@ function rebuildGrassBlades(ground, poolGroup, spaGroup = null) {
 
   const scene = ground.parent;
   const groundCircle = computeGroundCircle(poolGroup, spaGroup);
-  const radius = Math.max(1, groundCircle.radius - 0.35);
+  const radius = Math.max(1, groundCircle.radius - 0.45);
   const resources = getGrassBladeResources();
   const isMobile = window.matchMedia?.('(max-width: 900px), (pointer: coarse)')?.matches;
-  const requestedCount = isMobile ? 1800 : 4200;
 
-  poolGroup.updateMatrixWorld?.(true);
-  const poolBounds = new THREE.Box3().setFromObject(poolGroup);
-  const exclusionPadding = PAVING_WIDTH + COPING_OUTER_OVERHANG + GRASS_BLADE_MARGIN;
-  poolBounds.min.x -= exclusionPadding;
-  poolBounds.min.y -= exclusionPadding;
-  poolBounds.max.x += exclusionPadding;
-  poolBounds.max.y += exclusionPadding;
+  // Tufts contain three blades each, so this is visually denser than the old
+  // single-spike count while using fewer instances and draw overhead.
+  const requestedCount = isMobile ? 850 : 2200;
+  const pavingOuter = ground.userData?.poolPavingMesh?.userData?.outerFootprint || [];
 
   let spaBounds = null;
   if (spaGroup) {
     spaGroup.updateMatrixWorld?.(true);
     spaBounds = new THREE.Box3().setFromObject(spaGroup);
-    spaBounds.min.x -= GRASS_BLADE_MARGIN;
-    spaBounds.min.y -= GRASS_BLADE_MARGIN;
-    spaBounds.max.x += GRASS_BLADE_MARGIN;
-    spaBounds.max.y += GRASS_BLADE_MARGIN;
+    const spaClearance = 0.35;
+    spaBounds.min.x -= spaClearance;
+    spaBounds.min.y -= spaClearance;
+    spaBounds.max.x += spaClearance;
+    spaBounds.max.y += spaClearance;
   }
 
   const placements = [];
   const rand = seededRandomFactory(0x7a11c0de);
-  const maxAttempts = requestedCount * 12;
+  const maxAttempts = requestedCount * 24;
 
   for (let attempt = 0; attempt < maxAttempts && placements.length < requestedCount; attempt++) {
     const angle = rand() * Math.PI * 2;
@@ -2289,17 +2334,38 @@ function rebuildGrassBlades(ground, poolGroup, spaGroup = null) {
     const x = groundCircle.centerX + Math.cos(angle) * radial;
     const y = groundCircle.centerY + Math.sin(angle) * radial;
 
-    if (
-      x >= poolBounds.min.x && x <= poolBounds.max.x &&
-      y >= poolBounds.min.y && y <= poolBounds.max.y
-    ) continue;
+    // No blade may overlap the actual paving footprint.
+    if (pavingOuter.length >= 3 && pointInsidePolygon2D(x, y, pavingOuter)) continue;
 
     if (spaBounds &&
       x >= spaBounds.min.x && x <= spaBounds.max.x &&
       y >= spaBounds.min.y && y <= spaBounds.max.y
     ) continue;
 
-    placements.push({ x, y, randA: rand(), randB: rand(), randC: rand() });
+    let edgeDistance = GRASS_PAVING_FADE_DISTANCE;
+    if (pavingOuter.length >= 3) {
+      edgeDistance = distanceToPolygonEdges2D(x, y, pavingOuter);
+      if (edgeDistance < GRASS_PAVING_HARD_CLEARANCE) continue;
+
+      // Sparse immediately outside the paving, smoothly increasing to normal
+      // density over roughly one metre.
+      const density = THREE.MathUtils.smoothstep(
+        edgeDistance,
+        GRASS_PAVING_HARD_CLEARANCE,
+        GRASS_PAVING_FADE_DISTANCE
+      );
+      if (rand() > density) continue;
+    }
+
+    placements.push({
+      x,
+      y,
+      edgeDistance,
+      randA: rand(),
+      randB: rand(),
+      randC: rand(),
+      randD: rand()
+    });
   }
 
   const blades = new THREE.InstancedMesh(
@@ -2307,33 +2373,39 @@ function rebuildGrassBlades(ground, poolGroup, spaGroup = null) {
     resources.material,
     placements.length
   );
-  blades.name = 'Instanced grass blades';
+  blades.name = 'Instanced grass tufts';
   blades.castShadow = false;
-  blades.receiveShadow = true;
+  blades.receiveShadow = false;
   blades.frustumCulled = true;
   blades.renderOrder = 1;
 
   const dummy = new THREE.Object3D();
-  const baseColour = new THREE.Color(0x6f8f54);
-  const darkColour = new THREE.Color(0x496f39);
-  const lightColour = new THREE.Color(0x8ba568);
+  const baseColour = new THREE.Color(0x78965f);
+  const darkColour = new THREE.Color(0x587647);
+  const lightColour = new THREE.Color(0x91aa75);
+  const dryColour = new THREE.Color(0x84916a);
   const colour = new THREE.Color();
 
   placements.forEach((item, index) => {
-    const heightScale = 0.7 + item.randA * 0.85;
-    const widthScale = 0.75 + item.randB * 0.7;
-    dummy.position.set(item.x, item.y, ground.position.z + 0.006);
-    dummy.rotation.set(0, 0, item.randC * Math.PI * 2);
-    dummy.scale.set(widthScale, 1, heightScale);
+    // Short lawn-like tufts: approximately 35–80 mm tall.
+    const heightScale = 0.42 + item.randA * 0.52;
+    const widthScale = 0.72 + item.randB * 0.42;
+    const lean = (item.randD - 0.5) * 0.16;
+
+    dummy.position.set(item.x, item.y, ground.position.z + 0.004);
+    dummy.rotation.set(lean, lean * 0.6, item.randC * Math.PI * 2);
+    dummy.scale.set(widthScale, widthScale, heightScale);
     dummy.updateMatrix();
     blades.setMatrixAt(index, dummy.matrix);
 
     colour.copy(baseColour);
-    if (item.randA < 0.22) colour.lerp(darkColour, 0.45 + item.randB * 0.35);
-    else if (item.randA > 0.78) colour.lerp(lightColour, 0.35 + item.randB * 0.35);
+    if (item.randA < 0.18) colour.lerp(darkColour, 0.42);
+    else if (item.randA > 0.82) colour.lerp(lightColour, 0.34);
+    else if (item.randD < 0.12) colour.lerp(dryColour, 0.22);
     blades.setColorAt(index, colour);
   });
 
+  blades.instanceMatrix.setUsage(THREE.StaticDrawUsage);
   blades.instanceMatrix.needsUpdate = true;
   if (blades.instanceColor) blades.instanceColor.needsUpdate = true;
   scene.add(blades);
@@ -2886,6 +2958,8 @@ function updatePoolPaving(ground, poolGroup, spaGroup = null) {
   paving.renderOrder = 2;
   paving.userData.isPoolPaving = true;
   paving.userData.width = PAVING_WIDTH;
+  paving.userData.outerFootprint = outerPts.map((point) => point.clone());
+  paving.userData.innerFootprint = innerPts.map((point) => point.clone());
   paving.userData.topAlignedToCoping = true;
   scene.add(paving);
   ground.userData.poolPavingMesh = paving;
