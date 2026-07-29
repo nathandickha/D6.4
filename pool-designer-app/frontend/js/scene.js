@@ -2195,6 +2195,58 @@ function createProceduralGrassTexture(renderer) {
   return texture;
 }
 
+
+const ORBIT_GROUND_Z = 0;
+const ORBIT_CAMERA_CLEARANCE = 0.22;
+const ORBIT_TARGET_CLEARANCE = 0.02;
+
+/**
+ * Keeps OrbitControls above the Z-up ground plane.
+ *
+ * OrbitControls' maxPolarAngle prevents a normal orbit from crossing its
+ * target plane, but panning or programmatic camera changes can still move the
+ * target/camera below world Z = 0. This clamp handles every input path.
+ */
+export function constrainOrbitAboveGround(
+  camera,
+  controls,
+  {
+    groundZ = ORBIT_GROUND_Z,
+    cameraClearance = ORBIT_CAMERA_CLEARANCE,
+    targetClearance = ORBIT_TARGET_CLEARANCE
+  } = {}
+) {
+  if (!camera || !controls?.target) return false;
+
+  let changed = false;
+  const minTargetZ = groundZ + targetClearance;
+  const minCameraZ = groundZ + cameraClearance;
+
+  if (controls.target.z < minTargetZ) {
+    controls.target.z = minTargetZ;
+    changed = true;
+  }
+
+  if (camera.position.z < minCameraZ) {
+    camera.position.z = minCameraZ;
+    changed = true;
+  }
+
+  // Prevent the orbit pivot from ending above the camera, which can produce
+  // an inverted-feeling drag when the camera is close to the ground.
+  const maximumTargetZ = camera.position.z - 0.05;
+  if (controls.target.z > maximumTargetZ) {
+    controls.target.z = Math.max(minTargetZ, maximumTargetZ);
+    changed = true;
+  }
+
+  if (changed) {
+    camera.updateMatrixWorld?.();
+  }
+
+  return changed;
+}
+
 export async function initScene() {
   const container = document.getElementById("three-root") || document.body;
 
@@ -2278,10 +2330,18 @@ export async function initScene() {
   // Controls
   const controls = new OrbitControls(camera, renderer.domElement);
   controls.enableDamping = true;
-  controls.maxPolarAngle = Math.PI / 2.05;
-  controls.target.set(0, 0, 0);
+
+  // Z-up ground-safe orbit. The small angle margin keeps the viewing camera
+  // visibly above the horizon, while the explicit clamp also handles panning.
+  controls.maxPolarAngle = Math.PI / 2 - THREE.MathUtils.degToRad(2.5);
+  controls.minPolarAngle = THREE.MathUtils.degToRad(5);
+  controls.minDistance = 1.25;
+  controls.target.set(0, 0, ORBIT_TARGET_CLEARANCE);
   controls.update();
+  constrainOrbitAboveGround(camera, controls);
   scene.userData.controls = controls;
+  scene.userData.constrainOrbitAboveGround = () =>
+    constrainOrbitAboveGround(camera, controls);
 
   // -------------------------
   // Ground plane
