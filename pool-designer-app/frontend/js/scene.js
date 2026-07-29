@@ -2196,6 +2196,151 @@ function createProceduralGrassTexture(renderer) {
 }
 
 
+const GRASS_BLADE_MARGIN = 0.22;
+const GRASS_BLADE_HEIGHT = 0.14;
+let sharedGrassBladeGeometry = null;
+let sharedGrassBladeMaterial = null;
+
+function getGrassBladeResources() {
+  if (!sharedGrassBladeGeometry) {
+    // A tapered vertical triangle in the X/Z plane. Each instance rotates
+    // around world Z, producing a lightweight natural-looking lawn.
+    sharedGrassBladeGeometry = new THREE.BufferGeometry();
+    sharedGrassBladeGeometry.setAttribute(
+      'position',
+      new THREE.Float32BufferAttribute([
+        -0.015, 0, 0,
+         0.015, 0, 0,
+         0.000, 0, GRASS_BLADE_HEIGHT
+      ], 3)
+    );
+    sharedGrassBladeGeometry.computeVertexNormals();
+  }
+
+  if (!sharedGrassBladeMaterial) {
+    sharedGrassBladeMaterial = new THREE.MeshStandardMaterial({
+      color: 0xffffff,
+      roughness: 1.0,
+      metalness: 0.0,
+      side: THREE.DoubleSide,
+      vertexColors: true,
+      envMapIntensity: 0.12
+    });
+  }
+
+  return {
+    geometry: sharedGrassBladeGeometry,
+    material: sharedGrassBladeMaterial
+  };
+}
+
+function seededRandomFactory(seed = 0x51f15e) {
+  let state = seed >>> 0;
+  return () => {
+    state = (1664525 * state + 1013904223) >>> 0;
+    return state / 4294967296;
+  };
+}
+
+function removeGrassBlades(ground) {
+  const blades = ground?.userData?.grassBlades;
+  if (!blades) return;
+  blades.parent?.remove(blades);
+  ground.userData.grassBlades = null;
+}
+
+function rebuildGrassBlades(ground, poolGroup, spaGroup = null) {
+  if (!ground?.parent || !poolGroup?.userData?.outerPts?.length) return;
+
+  removeGrassBlades(ground);
+
+  const scene = ground.parent;
+  const groundCircle = computeGroundCircle(poolGroup, spaGroup);
+  const radius = Math.max(1, groundCircle.radius - 0.35);
+  const resources = getGrassBladeResources();
+  const isMobile = window.matchMedia?.('(max-width: 900px), (pointer: coarse)')?.matches;
+  const requestedCount = isMobile ? 1800 : 4200;
+
+  poolGroup.updateMatrixWorld?.(true);
+  const poolBounds = new THREE.Box3().setFromObject(poolGroup);
+  const exclusionPadding = PAVING_WIDTH + COPING_OUTER_OVERHANG + GRASS_BLADE_MARGIN;
+  poolBounds.min.x -= exclusionPadding;
+  poolBounds.min.y -= exclusionPadding;
+  poolBounds.max.x += exclusionPadding;
+  poolBounds.max.y += exclusionPadding;
+
+  let spaBounds = null;
+  if (spaGroup) {
+    spaGroup.updateMatrixWorld?.(true);
+    spaBounds = new THREE.Box3().setFromObject(spaGroup);
+    spaBounds.min.x -= GRASS_BLADE_MARGIN;
+    spaBounds.min.y -= GRASS_BLADE_MARGIN;
+    spaBounds.max.x += GRASS_BLADE_MARGIN;
+    spaBounds.max.y += GRASS_BLADE_MARGIN;
+  }
+
+  const placements = [];
+  const rand = seededRandomFactory(0x7a11c0de);
+  const maxAttempts = requestedCount * 12;
+
+  for (let attempt = 0; attempt < maxAttempts && placements.length < requestedCount; attempt++) {
+    const angle = rand() * Math.PI * 2;
+    const radial = Math.sqrt(rand()) * radius;
+    const x = groundCircle.centerX + Math.cos(angle) * radial;
+    const y = groundCircle.centerY + Math.sin(angle) * radial;
+
+    if (
+      x >= poolBounds.min.x && x <= poolBounds.max.x &&
+      y >= poolBounds.min.y && y <= poolBounds.max.y
+    ) continue;
+
+    if (spaBounds &&
+      x >= spaBounds.min.x && x <= spaBounds.max.x &&
+      y >= spaBounds.min.y && y <= spaBounds.max.y
+    ) continue;
+
+    placements.push({ x, y, randA: rand(), randB: rand(), randC: rand() });
+  }
+
+  const blades = new THREE.InstancedMesh(
+    resources.geometry,
+    resources.material,
+    placements.length
+  );
+  blades.name = 'Instanced grass blades';
+  blades.castShadow = false;
+  blades.receiveShadow = true;
+  blades.frustumCulled = true;
+  blades.renderOrder = 1;
+
+  const dummy = new THREE.Object3D();
+  const baseColour = new THREE.Color(0x6f8f54);
+  const darkColour = new THREE.Color(0x496f39);
+  const lightColour = new THREE.Color(0x8ba568);
+  const colour = new THREE.Color();
+
+  placements.forEach((item, index) => {
+    const heightScale = 0.7 + item.randA * 0.85;
+    const widthScale = 0.75 + item.randB * 0.7;
+    dummy.position.set(item.x, item.y, ground.position.z + 0.006);
+    dummy.rotation.set(0, 0, item.randC * Math.PI * 2);
+    dummy.scale.set(widthScale, 1, heightScale);
+    dummy.updateMatrix();
+    blades.setMatrixAt(index, dummy.matrix);
+
+    colour.copy(baseColour);
+    if (item.randA < 0.22) colour.lerp(darkColour, 0.45 + item.randB * 0.35);
+    else if (item.randA > 0.78) colour.lerp(lightColour, 0.35 + item.randB * 0.35);
+    blades.setColorAt(index, colour);
+  });
+
+  blades.instanceMatrix.needsUpdate = true;
+  if (blades.instanceColor) blades.instanceColor.needsUpdate = true;
+  scene.add(blades);
+  ground.userData.grassBlades = blades;
+}
+
+
 const ORBIT_GROUND_Z = 0;
 const ORBIT_CAMERA_CLEARANCE = 0.22;
 const ORBIT_TARGET_CLEARANCE = 0.02;
@@ -2354,7 +2499,7 @@ export async function initScene() {
   // Keep this mesh stable: updateGroundVoid() will replace the geometry to cut the pool footprint hole.
   // -------------------------
   const groundMat = new THREE.MeshStandardMaterial({
-    color: 0x5f7f47,
+    color: 0x708b58,
     roughness: 0.96,
     metalness: 0.0,
     envMapIntensity: 0.14,
@@ -2804,6 +2949,7 @@ export function updateGroundVoid(ground, poolGroup, spaGroup = null) {
   purgeDetachedSpaChannelArtifacts(scene, ground?.userData?.spaChannelGroup || null, ground?.userData?.spaChannelWaterGroup || null);
   updateSpaVoidDebug(ground?.parent, ground, poolGroup, spaGroup, holePts);
   updatePoolPaving(ground, poolGroup, spaGroup);
+  rebuildGrassBlades(ground, poolGroup, spaGroup);
   updateShadowBounds(poolGroup);
 }
 
