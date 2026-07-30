@@ -2023,28 +2023,63 @@ function ensureGroundSpaClipMaterial(ground) {
         '#include <color_fragment>',
         `#include <color_fragment>
          vec2 grassPos = vSpaClipWorldPos.xy;
-         // Rotate each noise octave so interpolation cells do not align into
-         // visible square boundaries.
+
+         /*
+          * Organic world-space lawn variation.
+          *
+          * Different rotations plus coordinate warping prevent interpolation
+          * cells from lining up into a visible grid. The result is broad,
+          * smooth lush/dry variation without geometry blades.
+          */
          mat2 grassRotA = mat2(0.8192, -0.5736, 0.5736, 0.8192);
          mat2 grassRotB = mat2(0.4226, -0.9063, 0.9063, 0.4226);
+         mat2 grassRotC = mat2(0.9659, -0.2588, 0.2588, 0.9659);
+
+         vec2 warp = vec2(
+           groundNoise((grassRotB * grassPos) * 0.083 + vec2(13.7, 4.8)),
+           groundNoise((grassRotC * grassPos) * 0.071 + vec2(2.4, 19.1))
+         ) - 0.5;
 
          float broadGrass =
-           groundNoise((grassRotA * grassPos) * 0.075);
+           groundNoise((grassRotA * grassPos) * 0.045 + warp * 0.82);
+         float secondaryGrass =
+           groundNoise((grassRotB * grassPos) * 0.125 + warp * 0.38 + vec2(8.1, 21.3));
          float mediumGrass =
-           groundNoise((grassRotB * grassPos) * 0.34 + vec2(17.3, 9.1));
+           groundNoise((grassRotC * grassPos) * 0.39 + vec2(17.3, 9.1));
          float fineGrass =
-           groundNoise((grassRotA * grassPos) * 1.65 + vec2(31.7, 22.4));
+           groundNoise((grassRotA * grassPos) * 1.72 + vec2(31.7, 22.4));
 
          float grassVariation =
-           (broadGrass - 0.5) * 0.12 +
-           (mediumGrass - 0.5) * 0.045 +
-           (fineGrass - 0.5) * 0.012;
+           (broadGrass - 0.5) * 0.17 +
+           (secondaryGrass - 0.5) * 0.082 +
+           (mediumGrass - 0.5) * 0.036 +
+           (fineGrass - 0.5) * 0.010;
+
          vec3 grassTint = vec3(
-           1.0 + grassVariation * 0.45,
+           1.0 + grassVariation * 0.46,
            1.0 + grassVariation,
-           1.0 + grassVariation * 0.32
+           1.0 + grassVariation * 0.34
          );
-         diffuseColor.rgb *= grassTint;`
+
+         float warmPatch =
+           groundNoise((grassRotB * grassPos) * 0.095 + warp * 0.22 + vec2(44.2, 7.6));
+         float lushPatch =
+           groundNoise((grassRotC * grassPos) * 0.165 + warp * 0.18 + vec2(5.7, 33.9));
+
+         vec3 warmTint = vec3(1.040, 1.005, 0.930);
+         vec3 lushTint = vec3(0.940, 1.050, 0.935);
+
+         diffuseColor.rgb *= grassTint;
+         diffuseColor.rgb = mix(
+           diffuseColor.rgb,
+           diffuseColor.rgb * warmTint,
+           smoothstep(0.60, 0.88, warmPatch) * 0.20
+         );
+         diffuseColor.rgb = mix(
+           diffuseColor.rgb,
+           diffuseColor.rgb * lushTint,
+           smoothstep(0.61, 0.90, lushPatch) * 0.17
+         );`
       )
       .replace(
         '#include <clipping_planes_fragment>',
@@ -2076,7 +2111,7 @@ function ensureGroundSpaClipMaterial(ground) {
       );
   };
 
-  mat.customProgramCacheKey = () => 'ground-spa-clip-circular-grass-fade-v4';
+  mat.customProgramCacheKey = () => 'ground-spa-clip-circular-ground-only-v5';
   mat.needsUpdate = true;
 }
 
@@ -2240,272 +2275,6 @@ function createProceduralGrassTexture(renderer) {
 
   return texture;
 }
-
-const GRASS_PAVING_HARD_CLEARANCE = 0.24;
-const GRASS_PAVING_FADE_DISTANCE = 1.45;
-const GRASS_BLADE_HEIGHT = 0.16;
-const GRASS_BLADE_WIDTH = 0.016;
-let sharedGrassBladeGeometry = null;
-let sharedGrassBladeMaterial = null;
-let sharedGrassWindUniform = null;
-
-function getGrassBladeResources() {
-  if (!sharedGrassBladeGeometry) {
-    // One tapered, segmented low-poly blade. Instancing keeps this to one draw call.
-    const segments = 4;
-    const positions = [];
-    const uvs = [];
-    const indices = [];
-
-    for (let i = 0; i <= segments; i++) {
-      const t = i / segments;
-      const z = t * GRASS_BLADE_HEIGHT;
-      const halfWidth = GRASS_BLADE_WIDTH * (1 - t) * 0.5;
-
-      positions.push(-halfWidth, 0, z);
-      positions.push( halfWidth, 0, z);
-      uvs.push(0, t, 1, t);
-
-      if (i < segments) {
-        const a = i * 2;
-        const b = a + 1;
-        const c = a + 2;
-        const d = a + 3;
-        indices.push(a, b, d, a, d, c);
-      }
-    }
-
-    sharedGrassBladeGeometry = new THREE.BufferGeometry();
-    sharedGrassBladeGeometry.setAttribute(
-      'position',
-      new THREE.Float32BufferAttribute(positions, 3)
-    );
-    sharedGrassBladeGeometry.setAttribute(
-      'uv',
-      new THREE.Float32BufferAttribute(uvs, 2)
-    );
-    sharedGrassBladeGeometry.setIndex(indices);
-    sharedGrassBladeGeometry.computeVertexNormals();
-    sharedGrassBladeGeometry.computeBoundingSphere();
-  }
-
-  if (!sharedGrassBladeMaterial) {
-    sharedGrassBladeMaterial = new THREE.MeshStandardMaterial({
-      color: 0x6f994f,
-      roughness: 0.92,
-      metalness: 0.0,
-      side: THREE.DoubleSide,
-      vertexColors: true,
-      envMapIntensity: 0.22
-    });
-
-    sharedGrassWindUniform = { value: 0 };
-
-    sharedGrassBladeMaterial.onBeforeCompile = (shader) => {
-      shader.uniforms.uGrassTime = sharedGrassWindUniform;
-
-      shader.vertexShader = shader.vertexShader
-        .replace(
-          '#include <common>',
-          `#include <common>
-           uniform float uGrassTime;`
-        )
-        .replace(
-          '#include <begin_vertex>',
-          `#include <begin_vertex>
-           float bladeHeightFactor = clamp(position.z / ${GRASS_BLADE_HEIGHT.toFixed(4)}, 0.0, 1.0);
-           vec3 instanceOrigin = vec3(instanceMatrix[3].xyz);
-           float windPhase =
-             instanceOrigin.x * 0.19 +
-             instanceOrigin.y * 0.13 +
-             uGrassTime * 1.35;
-           float wind = sin(windPhase) * 0.020 +
-                        sin(windPhase * 0.47 + 1.7) * 0.010;
-           transformed.x += wind * bladeHeightFactor * bladeHeightFactor;
-           transformed.y += cos(windPhase * 0.72) * 0.006 *
-                            bladeHeightFactor * bladeHeightFactor;`
-        );
-    };
-
-    sharedGrassBladeMaterial.customProgramCacheKey = () =>
-      'instanced-grass-wind-v2';
-  }
-
-  return {
-    geometry: sharedGrassBladeGeometry,
-    material: sharedGrassBladeMaterial,
-    windUniform: sharedGrassWindUniform
-  };
-}
-
-function seededRandomFactory(seed = 0x51f15e) {
-  let state = seed >>> 0;
-  return () => {
-    state = (1664525 * state + 1013904223) >>> 0;
-    return state / 4294967296;
-  };
-}
-
-function removeGrassBlades(ground) {
-  const blades = ground?.userData?.grassBlades;
-  if (!blades) return;
-  blades.parent?.remove(blades);
-  blades.dispose?.();
-  ground.userData.grassBlades = null;
-}
-
-function pointInsidePolygon2D(x, y, polygon) {
-  let inside = false;
-  for (let i = 0, j = polygon.length - 1; i < polygon.length; j = i++) {
-    const a = polygon[i];
-    const b = polygon[j];
-    const intersects = ((a.y > y) !== (b.y > y)) &&
-      (x < (b.x - a.x) * (y - a.y) / ((b.y - a.y) || 1e-9) + a.x);
-    if (intersects) inside = !inside;
-  }
-  return inside;
-}
-
-function distanceToPolygonEdges2D(x, y, polygon) {
-  let minDistanceSq = Infinity;
-  for (let i = 0; i < polygon.length; i++) {
-    const a = polygon[i];
-    const b = polygon[(i + 1) % polygon.length];
-    const abX = b.x - a.x;
-    const abY = b.y - a.y;
-    const lengthSq = abX * abX + abY * abY;
-    const t = lengthSq > 1e-9
-      ? THREE.MathUtils.clamp(((x - a.x) * abX + (y - a.y) * abY) / lengthSq, 0, 1)
-      : 0;
-    const closestX = a.x + abX * t;
-    const closestY = a.y + abY * t;
-    const dx = x - closestX;
-    const dy = y - closestY;
-    minDistanceSq = Math.min(minDistanceSq, dx * dx + dy * dy);
-  }
-  return Math.sqrt(minDistanceSq);
-}
-
-function rebuildGrassBlades(ground, poolGroup, spaGroup = null) {
-  if (!ground?.parent || !poolGroup?.userData?.outerPts?.length) return;
-
-  removeGrassBlades(ground);
-
-  const scene = ground.parent;
-  const groundCircle = computeGroundCircle(poolGroup, spaGroup);
-  const radius = Math.max(1, groundCircle.radius - 0.45);
-  const resources = getGrassBladeResources();
-  const isMobile = window.matchMedia?.('(max-width: 900px), (pointer: coarse)')?.matches;
-
-  // Tufts contain three blades each, so this is visually denser than the old
-  // single-spike count while using fewer instances and draw overhead.
-  const groundArea = Math.PI * radius * radius;
-  const requestedCount = isMobile
-    ? Math.min(6500, Math.max(2600, Math.round(groundArea * 1.2)))
-    : Math.min(24000, Math.max(9000, Math.round(groundArea * 2.8)));
-  const pavingOuter = ground.userData?.poolPavingMesh?.userData?.outerFootprint || [];
-
-  let spaBounds = null;
-  if (spaGroup) {
-    spaGroup.updateMatrixWorld?.(true);
-    spaBounds = new THREE.Box3().setFromObject(spaGroup);
-    const spaClearance = 0.35;
-    spaBounds.min.x -= spaClearance;
-    spaBounds.min.y -= spaClearance;
-    spaBounds.max.x += spaClearance;
-    spaBounds.max.y += spaClearance;
-  }
-
-  const placements = [];
-  const rand = seededRandomFactory(0x7a11c0de);
-  const maxAttempts = requestedCount * 24;
-
-  for (let attempt = 0; attempt < maxAttempts && placements.length < requestedCount; attempt++) {
-    const angle = rand() * Math.PI * 2;
-    const radial = Math.sqrt(rand()) * radius;
-    const x = groundCircle.centerX + Math.cos(angle) * radial;
-    const y = groundCircle.centerY + Math.sin(angle) * radial;
-
-    // No blade may overlap the actual paving footprint.
-    if (pavingOuter.length >= 3 && pointInsidePolygon2D(x, y, pavingOuter)) continue;
-
-    if (spaBounds &&
-      x >= spaBounds.min.x && x <= spaBounds.max.x &&
-      y >= spaBounds.min.y && y <= spaBounds.max.y
-    ) continue;
-
-    let edgeDistance = GRASS_PAVING_FADE_DISTANCE;
-    if (pavingOuter.length >= 3) {
-      edgeDistance = distanceToPolygonEdges2D(x, y, pavingOuter);
-      if (edgeDistance < GRASS_PAVING_HARD_CLEARANCE) continue;
-
-      // Sparse immediately outside the paving, smoothly increasing to normal
-      // density over roughly one metre.
-      const density = THREE.MathUtils.smoothstep(
-        edgeDistance,
-        GRASS_PAVING_HARD_CLEARANCE,
-        GRASS_PAVING_FADE_DISTANCE
-      );
-      if (rand() > density) continue;
-    }
-
-    placements.push({
-      x,
-      y,
-      edgeDistance,
-      randA: rand(),
-      randB: rand(),
-      randC: rand(),
-      randD: rand()
-    });
-  }
-
-  const blades = new THREE.InstancedMesh(
-    resources.geometry,
-    resources.material,
-    placements.length
-  );
-  blades.name = 'Instanced grass tufts';
-  blades.castShadow = false;
-  blades.receiveShadow = false;
-  blades.frustumCulled = true;
-  blades.renderOrder = 1;
-
-  const dummy = new THREE.Object3D();
-  const baseColour = new THREE.Color(0x749653);
-  const darkColour = new THREE.Color(0x4f733e);
-  const lightColour = new THREE.Color(0x98b86d);
-  const dryColour = new THREE.Color(0x9b9562);
-  const colour = new THREE.Color();
-
-  placements.forEach((item, index) => {
-    // Most blades remain short and fine. A small minority are taller
-    // to avoid a uniformly clipped lawn silhouette.
-    const heightScale = 0.48 + Math.pow(item.randA, 2.25) * 0.78;
-    const widthScale = 0.68 + item.randB * 0.72;
-    const leanX = (item.randD - 0.5) * 0.09;
-    const leanY = (item.randC - 0.5) * 0.06;
-
-    dummy.position.set(item.x, item.y, ground.position.z + 0.004);
-    dummy.rotation.set(leanX, leanY, item.randC * Math.PI * 2);
-    dummy.scale.set(widthScale, widthScale, heightScale);
-    dummy.updateMatrix();
-    blades.setMatrixAt(index, dummy.matrix);
-
-    colour.copy(baseColour);
-    if (item.randA < 0.18) colour.lerp(darkColour, 0.42);
-    else if (item.randA > 0.82) colour.lerp(lightColour, 0.34);
-    else if (item.randD < 0.12) colour.lerp(dryColour, 0.22);
-    blades.setColorAt(index, colour);
-  });
-
-  blades.instanceMatrix.setUsage(THREE.StaticDrawUsage);
-  blades.instanceMatrix.needsUpdate = true;
-  if (blades.instanceColor) blades.instanceColor.needsUpdate = true;
-  scene.add(blades);
-  ground.userData.grassBlades = blades;
-}
-
 
 const ORBIT_GROUND_Z = 0;
 const ORBIT_CAMERA_CLEARANCE = 0.22;
@@ -3135,7 +2904,6 @@ export function updateGroundVoid(ground, poolGroup, spaGroup = null) {
   purgeDetachedSpaChannelArtifacts(scene, ground?.userData?.spaChannelGroup || null, ground?.userData?.spaChannelWaterGroup || null);
   updateSpaVoidDebug(ground?.parent, ground, poolGroup, spaGroup, holePts);
   updatePoolPaving(ground, poolGroup, spaGroup);
-  rebuildGrassBlades(ground, poolGroup, spaGroup);
   updateShadowBounds(poolGroup);
 }
 
@@ -3421,24 +3189,8 @@ export function updatePoolWaterVoid(poolGroup, spaGroup) {
 // Rebuild grass overlay after pool rebuild
 // --------------------------------------------------------
 
-export function updateGrassWind(elapsedSeconds) {
-  if (sharedGrassWindUniform) {
-    sharedGrassWindUniform.value = elapsedSeconds;
-  }
-}
 
 
-export function updateGrassForPool(scene, poolGroup) {
-  const ground = scene?.userData?.ground;
-  if (!ground || !poolGroup) return;
-
-  const spaGroup =
-    scene.getObjectByName?.('SpaGroup') ||
-    scene.getObjectByName?.('Spa') ||
-    null;
-
-  rebuildGrassBlades(ground, poolGroup, spaGroup);
-}
 // OPTION A: joined coping
 
 

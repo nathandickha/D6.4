@@ -1,6 +1,6 @@
 // js/app/PoolApp.js
 import * as THREE from "https://esm.sh/three@0.158.0";
-import { initScene, updateGroundVoid, updatePoolWaterVoid, updateGrassForPool, purgeDetachedSpaChannelArtifacts, updateGrassWind } from "../scene.js";
+import { initScene, updateGroundVoid, updatePoolWaterVoid, purgeDetachedSpaChannelArtifacts } from "../scene.js";
 
 import { createPoolGroup, previewUpdateDepths } from "../pool/pool.js";
 import { EditablePolygon } from "../pool/editing/polygon.js";
@@ -130,7 +130,6 @@ const STARTER_POOL_PRESETS = [
 export class PoolApp {
     constructor() {
     this.controllers = new ControllerRegistry();
-    this.grassWindClock = new THREE.Clock();
 
     this.poolParams = createPoolState({
       length: 10,
@@ -6682,8 +6681,7 @@ updatePoolWaterVoid(this.poolGroup, this.spa);
     if (this.scene && this.poolGroup) {
       this.scene.add(this.poolGroup);
 updateGroundVoid(this.ground || this.scene.userData.ground, this.poolGroup, this.spa);
-      updateGrassForPool(this.scene, this.poolGroup);
-    }
+}
 
     if (this.pbrManager && this.poolGroup) {
       this.pbrManager.setPoolGroup(this.poolGroup);
@@ -8129,8 +8127,7 @@ setupPoolEditor() {
 
         // Keep all dependent systems in sync immediately.
         updateGroundVoid(this.ground, this.poolGroup, this.spa);
-        updateGrassForPool(this.scene, this.poolGroup);
-        if (this.spa) {
+if (this.spa) {
           updatePoolWaterVoid(this.poolGroup, this.spa);
           updateGroundVoid(this.ground || this.scene?.userData?.ground, this.poolGroup, this.spa);
         }
@@ -8976,7 +8973,6 @@ if (_poolWater && _poolU && this._waterInteriorRT) {
     // Render scene depth into the DepthTexture target
     this.renderer.setRenderTarget(this._waterDepthRT);
     this.renderer.clear(true, true, true);
-    updateGrassWind(this.grassWindClock.getElapsedTime());
     this.renderer.render(this.scene, this.camera);
     this.renderer.setRenderTarget(null);
 
