@@ -1,12 +1,6 @@
 // js/app/PoolApp.js
 import * as THREE from "https://esm.sh/three@0.158.0";
-import {
-  initScene,
-  updateGroundVoid,
-  updatePoolWaterVoid,
-  updateGrassForPool,
-  purgeDetachedSpaChannelArtifacts
-} from "../scene.js";
+import { initScene, updateGroundVoid, updatePoolWaterVoid, updateGrassForPool, purgeDetachedSpaChannelArtifacts, updateGrassWind } from "../scene.js";
 
 import { createPoolGroup, previewUpdateDepths } from "../pool/pool.js";
 import { EditablePolygon } from "../pool/editing/polygon.js";
@@ -136,6 +130,7 @@ const STARTER_POOL_PRESETS = [
 export class PoolApp {
     constructor() {
     this.controllers = new ControllerRegistry();
+    this.grassWindClock = new THREE.Clock();
 
     this.poolParams = createPoolState({
       length: 10,
@@ -8981,6 +8976,7 @@ if (_poolWater && _poolU && this._waterInteriorRT) {
     // Render scene depth into the DepthTexture target
     this.renderer.setRenderTarget(this._waterDepthRT);
     this.renderer.clear(true, true, true);
+    updateGrassWind(this.grassWindClock.getElapsedTime());
     this.renderer.render(this.scene, this.camera);
     this.renderer.setRenderTarget(null);
 

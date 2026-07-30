@@ -75,7 +75,7 @@ function getMaxDevicePixelRatio() {
 }
 
 function applyRendererPixelRatio(renderer) {
-  renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, getMaxDevicePixelRatio()));
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, window.innerWidth < 768 ? 1.5 : 2.0));
 }
 
 function createRotatedEquirectangularTexture(renderer, sourceTexture, rotationZ) {
@@ -2143,190 +2143,129 @@ function createProceduralGrassTexture(renderer) {
   canvas.height = size;
   const ctx = canvas.getContext('2d', { alpha: false });
 
-  let seed = 0x67a93d1;
+  let seed = 0x8f31ac7;
   const rand = () => {
     seed = (1664525 * seed + 1013904223) >>> 0;
     return seed / 4294967296;
   };
 
-  // Natural muted lawn base.
   ctx.fillStyle = '#78945f';
   ctx.fillRect(0, 0, size, size);
 
-  // Broad irregular colour patches, similar to mown lawn variation.
-  for (let i = 0; i < 260; i++) {
+  // Large-scale macro variation. These patches deliberately exceed the final
+  // texture repeat scale so visible striping and tile seams are broken up.
+  for (let i = 0; i < 170; i++) {
     const x = rand() * size;
     const y = rand() * size;
-    const radius = 24 + rand() * 110;
-    const gradient = ctx.createRadialGradient(x, y, 0, x, y, radius);
+    const rx = 60 + rand() * 220;
+    const ry = 45 + rand() * 180;
+    const angle = rand() * Math.PI;
 
-    const tone = rand();
-    const centre = tone < 0.48
-      ? 'rgba(56,92,42,0.18)'
-      : tone < 0.82
-        ? 'rgba(142,166,91,0.18)'
-        : 'rgba(150,133,78,0.10)';
+    ctx.save();
+    ctx.translate(x, y);
+    ctx.rotate(angle);
+    ctx.scale(1, ry / rx);
 
-    gradient.addColorStop(0, centre);
-    gradient.addColorStop(1, 'rgba(110,140,75,0)');
+    const gradient = ctx.createRadialGradient(0, 0, 0, 0, 0, rx);
+    const pick = rand();
+    gradient.addColorStop(
+      0,
+      pick < 0.45
+        ? 'rgba(49,82,38,0.22)'
+        : pick < 0.8
+          ? 'rgba(151,169,96,0.20)'
+          : 'rgba(139,119,73,0.13)'
+    );
+    gradient.addColorStop(1, 'rgba(100,130,70,0)');
     ctx.fillStyle = gradient;
-    ctx.fillRect(x - radius, y - radius, radius * 2, radius * 2);
+    ctx.fillRect(-rx, -rx, rx * 2, rx * 2);
+    ctx.restore();
   }
 
-  // Fine mottled turf noise.
+  // Fine mottled colour noise.
   const image = ctx.getImageData(0, 0, size, size);
   const data = image.data;
   for (let i = 0; i < data.length; i += 4) {
-    const variation = (rand() - 0.5) * 17;
-    data[i] = Math.max(0, Math.min(255, data[i] + variation * 0.55));
+    const variation = (rand() - 0.5) * 15;
+    data[i] = Math.max(0, Math.min(255, data[i] + variation * 0.45));
     data[i + 1] = Math.max(0, Math.min(255, data[i + 1] + variation));
     data[i + 2] = Math.max(0, Math.min(255, data[i + 2] + variation * 0.35));
   }
   ctx.putImageData(image, 0, 0);
 
-  // Dense, short directional fibres. These provide continuous grass detail in
-  // the distance without requiring millions of geometry blades.
+  // Random short fibres in mixed directions to avoid directional repeating lines.
   ctx.lineCap = 'round';
-  for (let i = 0; i < 42000; i++) {
+  for (let i = 0; i < 56000; i++) {
     const x = rand() * size;
     const y = rand() * size;
-    const length = 1.2 + rand() * 5.2;
-    const lean = (rand() - 0.5) * 2.4;
-    const alpha = 0.05 + rand() * 0.13;
+    const length = 0.8 + rand() * 4.0;
+    const angle = rand() * Math.PI * 2;
+    const alpha = 0.035 + rand() * 0.11;
 
-    ctx.strokeStyle = rand() < 0.55
-      ? `rgba(42,82,36,${alpha})`
-      : `rgba(155,177,101,${alpha * 0.8})`;
-    ctx.lineWidth = 0.45 + rand() * 0.75;
+    ctx.strokeStyle = rand() < 0.58
+      ? `rgba(40,79,34,${alpha})`
+      : `rgba(161,179,105,${alpha * 0.78})`;
+    ctx.lineWidth = 0.4 + rand() * 0.6;
     ctx.beginPath();
     ctx.moveTo(x, y);
-    ctx.lineTo(x + lean, y - length);
+    ctx.lineTo(x + Math.cos(angle) * length, y + Math.sin(angle) * length);
     ctx.stroke();
   }
 
   const texture = new THREE.CanvasTexture(canvas);
-  texture.name = 'Layered procedural lawn';
+  texture.name = 'Macro-micro procedural lawn';
   texture.colorSpace = THREE.SRGBColorSpace;
   texture.wrapS = THREE.RepeatWrapping;
   texture.wrapT = THREE.RepeatWrapping;
 
-  // ShapeGeometry UVs are based on world coordinates. This repeat creates
-  // turf-scale detail while avoiding visible tile repetition.
-  texture.repeat.set(0.19, 0.19);
+  // Larger mapping scale than before to reduce visible repetition.
+  texture.repeat.set(0.07, 0.07);
   texture.minFilter = THREE.LinearMipmapLinearFilter;
   texture.magFilter = THREE.LinearFilter;
   texture.generateMipmaps = true;
   texture.anisotropy = Math.min(
-    8,
+    16,
     renderer?.capabilities?.getMaxAnisotropy?.() || 1
   );
   texture.needsUpdate = true;
   return texture;
 }
 
-function createGrassTuftTexture() {
-  const width = 256;
-  const height = 256;
-  const canvas = document.createElement('canvas');
-  canvas.width = width;
-  canvas.height = height;
-  const ctx = canvas.getContext('2d');
 
-  ctx.clearRect(0, 0, width, height);
-  ctx.lineCap = 'round';
 
-  let seed = 0x91c7f2;
-  const rand = () => {
-    seed = (1664525 * seed + 1013904223) >>> 0;
-    return seed / 4294967296;
-  };
-
-  // Draw many fine curved blades into one soft tuft card.
-  for (let i = 0; i < 34; i++) {
-    const baseX = width * (0.34 + rand() * 0.32);
-    const baseY = height * 0.96;
-    const bladeHeight = height * (0.34 + rand() * 0.57);
-    const tipX = baseX + (rand() - 0.5) * width * 0.36;
-    const controlX = baseX + (rand() - 0.5) * width * 0.20;
-    const controlY = baseY - bladeHeight * (0.42 + rand() * 0.22);
-
-    const green = 105 + Math.round(rand() * 70);
-    const red = 48 + Math.round(rand() * 45);
-    const blue = 38 + Math.round(rand() * 30);
-    ctx.strokeStyle = `rgba(${red},${green},${blue},${0.46 + rand() * 0.42})`;
-    ctx.lineWidth = 1.1 + rand() * 2.2;
-
-    ctx.beginPath();
-    ctx.moveTo(baseX, baseY);
-    ctx.quadraticCurveTo(controlX, controlY, tipX, baseY - bladeHeight);
-    ctx.stroke();
-  }
-
-  // Soft base to visually join the blades to the textured ground.
-  const baseGradient = ctx.createRadialGradient(
-    width * 0.5, height * 0.93, 0,
-    width * 0.5, height * 0.93, width * 0.24
-  );
-  baseGradient.addColorStop(0, 'rgba(61,104,46,0.42)');
-  baseGradient.addColorStop(1, 'rgba(61,104,46,0)');
-  ctx.fillStyle = baseGradient;
-  ctx.fillRect(0, height * 0.73, width, height * 0.27);
-
-  const texture = new THREE.CanvasTexture(canvas);
-  texture.name = 'Soft grass tuft';
-  texture.colorSpace = THREE.SRGBColorSpace;
-  texture.minFilter = THREE.LinearMipmapLinearFilter;
-  texture.magFilter = THREE.LinearFilter;
-  texture.generateMipmaps = true;
-  texture.needsUpdate = true;
-  return texture;
-}
-
-const GRASS_PAVING_HARD_CLEARANCE = 0.22;
-const GRASS_PAVING_FADE_DISTANCE = 1.35;
-const GRASS_TUFT_BASE_WIDTH = 0.18;
-const GRASS_TUFT_BASE_HEIGHT = 0.24;
+const GRASS_PAVING_HARD_CLEARANCE = 0.24;
+const GRASS_PAVING_FADE_DISTANCE = 1.45;
+const GRASS_BLADE_HEIGHT = 0.16;
+const GRASS_BLADE_WIDTH = 0.016;
 let sharedGrassBladeGeometry = null;
 let sharedGrassBladeMaterial = null;
+let sharedGrassWindUniform = null;
 
 function getGrassBladeResources() {
   if (!sharedGrassBladeGeometry) {
-    // Two crossed alpha-cut cards create a soft tuft from every viewing angle.
-    // The texture contains dozens of fine curved blades, so instances no longer
-    // resemble isolated triangles or spikes.
-    const halfWidth = GRASS_TUFT_BASE_WIDTH * 0.5;
-    const height = GRASS_TUFT_BASE_HEIGHT;
+    // One tapered, segmented low-poly blade. Instancing keeps this to one draw call.
+    const segments = 4;
     const positions = [];
     const uvs = [];
     const indices = [];
 
-    const addCard = (angle) => {
-      const base = positions.length / 3;
-      const dx = Math.cos(angle) * halfWidth;
-      const dy = Math.sin(angle) * halfWidth;
+    for (let i = 0; i <= segments; i++) {
+      const t = i / segments;
+      const z = t * GRASS_BLADE_HEIGHT;
+      const halfWidth = GRASS_BLADE_WIDTH * (1 - t) * 0.5;
 
-      positions.push(
-        -dx, -dy, 0,
-         dx,  dy, 0,
-         dx,  dy, height,
-        -dx, -dy, height
-      );
+      positions.push(-halfWidth, 0, z);
+      positions.push( halfWidth, 0, z);
+      uvs.push(0, t, 1, t);
 
-      uvs.push(
-        0, 0,
-        1, 0,
-        1, 1,
-        0, 1
-      );
-
-      indices.push(
-        base, base + 1, base + 2,
-        base, base + 2, base + 3
-      );
-    };
-
-    addCard(0);
-    addCard(Math.PI * 0.5);
+      if (i < segments) {
+        const a = i * 2;
+        const b = a + 1;
+        const c = a + 2;
+        const d = a + 3;
+        indices.push(a, b, d, a, d, c);
+      }
+    }
 
     sharedGrassBladeGeometry = new THREE.BufferGeometry();
     sharedGrassBladeGeometry.setAttribute(
@@ -2338,27 +2277,56 @@ function getGrassBladeResources() {
       new THREE.Float32BufferAttribute(uvs, 2)
     );
     sharedGrassBladeGeometry.setIndex(indices);
+    sharedGrassBladeGeometry.computeVertexNormals();
     sharedGrassBladeGeometry.computeBoundingSphere();
   }
 
   if (!sharedGrassBladeMaterial) {
-    const tuftTexture = createGrassTuftTexture();
-
-    sharedGrassBladeMaterial = new THREE.MeshBasicMaterial({
-      map: tuftTexture,
-      alphaTest: 0.24,
-      transparent: false,
-      depthWrite: true,
+    sharedGrassBladeMaterial = new THREE.MeshStandardMaterial({
+      color: 0x6f994f,
+      roughness: 0.92,
+      metalness: 0.0,
       side: THREE.DoubleSide,
       vertexColors: true,
-      toneMapped: true,
-      fog: true
+      envMapIntensity: 0.22
     });
+
+    sharedGrassWindUniform = { value: 0 };
+
+    sharedGrassBladeMaterial.onBeforeCompile = (shader) => {
+      shader.uniforms.uGrassTime = sharedGrassWindUniform;
+
+      shader.vertexShader = shader.vertexShader
+        .replace(
+          '#include <common>',
+          `#include <common>
+           uniform float uGrassTime;`
+        )
+        .replace(
+          '#include <begin_vertex>',
+          `#include <begin_vertex>
+           float bladeHeightFactor = clamp(position.z / ${GRASS_BLADE_HEIGHT.toFixed(4)}, 0.0, 1.0);
+           vec3 instanceOrigin = vec3(instanceMatrix[3].xyz);
+           float windPhase =
+             instanceOrigin.x * 0.19 +
+             instanceOrigin.y * 0.13 +
+             uGrassTime * 1.35;
+           float wind = sin(windPhase) * 0.020 +
+                        sin(windPhase * 0.47 + 1.7) * 0.010;
+           transformed.x += wind * bladeHeightFactor * bladeHeightFactor;
+           transformed.y += cos(windPhase * 0.72) * 0.006 *
+                            bladeHeightFactor * bladeHeightFactor;`
+        );
+    };
+
+    sharedGrassBladeMaterial.customProgramCacheKey = () =>
+      'instanced-grass-wind-v2';
   }
 
   return {
     geometry: sharedGrassBladeGeometry,
-    material: sharedGrassBladeMaterial
+    material: sharedGrassBladeMaterial,
+    windUniform: sharedGrassWindUniform
   };
 }
 
@@ -2425,8 +2393,8 @@ function rebuildGrassBlades(ground, poolGroup, spaGroup = null) {
   // single-spike count while using fewer instances and draw overhead.
   const groundArea = Math.PI * radius * radius;
   const requestedCount = isMobile
-    ? Math.min(5200, Math.max(2400, Math.round(groundArea * 1.05)))
-    : Math.min(18000, Math.max(7500, Math.round(groundArea * 2.15)));
+    ? Math.min(6500, Math.max(2600, Math.round(groundArea * 1.2)))
+    : Math.min(24000, Math.max(9000, Math.round(groundArea * 2.8)));
   const pavingOuter = ground.userData?.poolPavingMesh?.userData?.outerFootprint || [];
 
   let spaBounds = null;
@@ -2496,22 +2464,22 @@ function rebuildGrassBlades(ground, poolGroup, spaGroup = null) {
   blades.renderOrder = 1;
 
   const dummy = new THREE.Object3D();
-  const baseColour = new THREE.Color(0x86a766);
-  const darkColour = new THREE.Color(0x5f844c);
-  const lightColour = new THREE.Color(0xa2bf78);
-  const dryColour = new THREE.Color(0xa39b67);
+  const baseColour = new THREE.Color(0x749653);
+  const darkColour = new THREE.Color(0x4f733e);
+  const lightColour = new THREE.Color(0x98b86d);
+  const dryColour = new THREE.Color(0x9b9562);
   const colour = new THREE.Color();
 
   placements.forEach((item, index) => {
-    // Soft lawn clumps approximately 80–220 mm tall. Most instances
-    // remain short; occasional taller tufts break up the silhouette naturally.
-    const tallBias = Math.pow(item.randA, 2.6);
-    const heightScale = 0.34 + tallBias * 0.58;
-    const widthScale = 0.58 + item.randB * 0.52;
-    const lean = (item.randD - 0.5) * 0.08;
+    // Most blades remain short and fine. A small minority are taller
+    // to avoid a uniformly clipped lawn silhouette.
+    const heightScale = 0.48 + Math.pow(item.randA, 2.25) * 0.78;
+    const widthScale = 0.68 + item.randB * 0.72;
+    const leanX = (item.randD - 0.5) * 0.09;
+    const leanY = (item.randC - 0.5) * 0.06;
 
-    dummy.position.set(item.x, item.y, ground.position.z + 0.006);
-    dummy.rotation.set(lean, lean * 0.45, item.randC * Math.PI * 2);
+    dummy.position.set(item.x, item.y, ground.position.z + 0.004);
+    dummy.rotation.set(leanX, leanY, item.randC * Math.PI * 2);
     dummy.scale.set(widthScale, widthScale, heightScale);
     dummy.updateMatrix();
     blades.setMatrixAt(index, dummy.matrix);
@@ -3428,6 +3396,14 @@ export function updatePoolWaterVoid(poolGroup, spaGroup) {
 // --------------------------------------------------------
 // Rebuild grass overlay after pool rebuild
 // --------------------------------------------------------
+
+export function updateGrassWind(elapsedSeconds) {
+  if (sharedGrassWindUniform) {
+    sharedGrassWindUniform.value = elapsedSeconds;
+  }
+}
+
+
 export function updateGrassForPool(scene, poolGroup) {
   const ground = scene?.userData?.ground;
   if (!ground || !poolGroup) return;
