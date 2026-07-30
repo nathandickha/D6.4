@@ -9003,6 +9003,7 @@ if (_poolWater && _poolU && this._waterInteriorRT) {
 }
 
 this.controls.update();
+this.scene?.userData?.constrainOrbitAboveGround?.();
     this.renderer.render(this.scene, this.camera);
 
     // Lightweight production telemetry using Three.js renderer.info.
