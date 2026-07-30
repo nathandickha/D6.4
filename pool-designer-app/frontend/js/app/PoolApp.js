@@ -1,6 +1,12 @@
 // js/app/PoolApp.js
 import * as THREE from "https://esm.sh/three@0.158.0";
-import { initScene, updateGroundVoid, updatePoolWaterVoid, purgeDetachedSpaChannelArtifacts } from "../scene.js";
+import {
+  initScene,
+  updateGroundVoid,
+  updatePoolWaterVoid,
+  updateGrassForPool,
+  purgeDetachedSpaChannelArtifacts
+} from "../scene.js";
 
 import { createPoolGroup, previewUpdateDepths } from "../pool/pool.js";
 import { EditablePolygon } from "../pool/editing/polygon.js";
@@ -6681,7 +6687,8 @@ updatePoolWaterVoid(this.poolGroup, this.spa);
     if (this.scene && this.poolGroup) {
       this.scene.add(this.poolGroup);
 updateGroundVoid(this.ground || this.scene.userData.ground, this.poolGroup, this.spa);
-}
+      updateGrassForPool(this.scene, this.poolGroup);
+    }
 
     if (this.pbrManager && this.poolGroup) {
       this.pbrManager.setPoolGroup(this.poolGroup);
@@ -8127,7 +8134,8 @@ setupPoolEditor() {
 
         // Keep all dependent systems in sync immediately.
         updateGroundVoid(this.ground, this.poolGroup, this.spa);
-if (this.spa) {
+        updateGrassForPool(this.scene, this.poolGroup);
+        if (this.spa) {
           updatePoolWaterVoid(this.poolGroup, this.spa);
           updateGroundVoid(this.ground || this.scene?.userData?.ground, this.poolGroup, this.spa);
         }
@@ -8995,7 +9003,6 @@ if (_poolWater && _poolU && this._waterInteriorRT) {
 }
 
 this.controls.update();
-this.scene?.userData?.constrainOrbitAboveGround?.();
     this.renderer.render(this.scene, this.camera);
 
     // Lightweight production telemetry using Three.js renderer.info.

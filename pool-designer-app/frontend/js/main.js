@@ -416,7 +416,7 @@ function createStarterPreviewStudioScene(THREE, scene, previewGroup, modules) {
 
   const groundGeo = new THREE.PlaneGeometry(24, 24, 1, 1);
   const groundMat = new THREE.MeshStandardMaterial({
-    color: 0x708b58,
+    color: 0xf3f5f7,
     roughness: 0.96,
     metalness: 0.0,
     envMapIntensity: 0.25
