@@ -2050,10 +2050,10 @@ function ensureGroundSpaClipMaterial(ground) {
            groundNoise((grassRotA * grassPos) * 1.72 + vec2(31.7, 22.4));
 
          float grassVariation =
-           (broadGrass - 0.5) * 0.115 +
-           (secondaryGrass - 0.5) * 0.052 +
-           (mediumGrass - 0.5) * 0.022 +
-           (fineGrass - 0.5) * 0.006;
+           (broadGrass - 0.5) * 0.145 +
+           (secondaryGrass - 0.5) * 0.068 +
+           (mediumGrass - 0.5) * 0.030 +
+           (fineGrass - 0.5) * 0.009;
 
          vec3 grassTint = vec3(
            1.0 + grassVariation * 0.46,
@@ -2073,12 +2073,12 @@ function ensureGroundSpaClipMaterial(ground) {
          diffuseColor.rgb = mix(
            diffuseColor.rgb,
            diffuseColor.rgb * warmTint,
-           smoothstep(0.60, 0.88, warmPatch) * 0.13
+           smoothstep(0.58, 0.87, warmPatch) * 0.17
          );
          diffuseColor.rgb = mix(
            diffuseColor.rgb,
            diffuseColor.rgb * lushTint,
-           smoothstep(0.61, 0.90, lushPatch) * 0.11
+           smoothstep(0.59, 0.89, lushPatch) * 0.15
          );`
       )
       .replace(
@@ -2111,7 +2111,7 @@ function ensureGroundSpaClipMaterial(ground) {
       );
   };
 
-  mat.customProgramCacheKey = () => 'ground-spa-clip-circular-ground-reference-v6';
+  mat.customProgramCacheKey = () => 'ground-spa-clip-circular-visible-texture-v7';
   mat.needsUpdate = true;
 }
 
@@ -2193,7 +2193,7 @@ function createProceduralGrassTexture(renderer) {
     return seed / 4294967296;
   };
 
-  ctx.fillStyle = '#5c7d3b';
+  ctx.fillStyle = '#78955b';
   ctx.fillRect(0, 0, size, size);
 
   /*
@@ -2208,8 +2208,8 @@ function createProceduralGrassTexture(renderer) {
   const data = image.data;
 
   for (let i = 0; i < data.length; i += 4) {
-    const fine = (rand() - 0.5) * 11;
-    const medium = (rand() - 0.5) * 4;
+    const fine = (rand() - 0.5) * 18;
+    const medium = (rand() - 0.5) * 8;
 
     data[i] = Math.max(
       0,
@@ -2239,8 +2239,8 @@ function createProceduralGrassTexture(renderer) {
     const alpha = 0.035 + rand() * 0.10;
 
     ctx.strokeStyle = rand() < 0.58
-      ? `rgba(45,72,29,${alpha})`
-      : `rgba(128,151,79,${alpha * 0.70})`;
+      ? `rgba(43,78,34,${alpha * 1.08})`
+      : `rgba(166,186,111,${alpha * 0.82})`;
 
     ctx.lineWidth = 0.38 + rand() * 0.58;
     ctx.beginPath();
@@ -2261,7 +2261,7 @@ function createProceduralGrassTexture(renderer) {
   // ShapeGeometry UVs are normalised over the complete ground footprint.
   // A high repeat gives approximately turf-scale detail rather than one
   // stretched image across the entire landscape.
-  texture.repeat.set(34, 34);
+  texture.repeat.set(18, 18);
 
   texture.minFilter = THREE.LinearMipmapLinearFilter;
   texture.magFilter = THREE.LinearFilter;
@@ -2437,11 +2437,13 @@ export async function initScene() {
   // -------------------------
   const grassGroundTexture = createProceduralGrassTexture(renderer);
   const groundMat = new THREE.MeshStandardMaterial({
-    color: 0xb7c79b,
+    color: 0xf1f4e9,
     map: grassGroundTexture,
-    roughness: 0.98,
+    roughness: 0.94,
     metalness: 0.0,
-    envMapIntensity: 0.12,
+    envMapIntensity: 0.22,
+    emissive: 0x17200f,
+    emissiveIntensity: 0.08,
     transparent: true,
     alphaTest: 0.015,
     depthWrite: true,
