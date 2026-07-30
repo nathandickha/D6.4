@@ -2023,13 +2023,22 @@ function ensureGroundSpaClipMaterial(ground) {
         '#include <color_fragment>',
         `#include <color_fragment>
          vec2 grassPos = vSpaClipWorldPos.xy;
-         float broadGrass = groundNoise(grassPos * 0.16);
-         float mediumGrass = groundNoise(grassPos * 0.72 + vec2(17.3, 9.1));
-         float fineGrass = groundNoise(grassPos * 3.1 + vec2(31.7, 22.4));
+         // Rotate each noise octave so interpolation cells do not align into
+         // visible square boundaries.
+         mat2 grassRotA = mat2(0.8192, -0.5736, 0.5736, 0.8192);
+         mat2 grassRotB = mat2(0.4226, -0.9063, 0.9063, 0.4226);
+
+         float broadGrass =
+           groundNoise((grassRotA * grassPos) * 0.075);
+         float mediumGrass =
+           groundNoise((grassRotB * grassPos) * 0.34 + vec2(17.3, 9.1));
+         float fineGrass =
+           groundNoise((grassRotA * grassPos) * 1.65 + vec2(31.7, 22.4));
+
          float grassVariation =
-           (broadGrass - 0.5) * 0.16 +
-           (mediumGrass - 0.5) * 0.07 +
-           (fineGrass - 0.5) * 0.018;
+           (broadGrass - 0.5) * 0.12 +
+           (mediumGrass - 0.5) * 0.045 +
+           (fineGrass - 0.5) * 0.012;
          vec3 grassTint = vec3(
            1.0 + grassVariation * 0.45,
            1.0 + grassVariation,
@@ -2067,7 +2076,7 @@ function ensureGroundSpaClipMaterial(ground) {
       );
   };
 
-  mat.customProgramCacheKey = () => 'ground-spa-clip-circular-grass-fade-v3';
+  mat.customProgramCacheKey = () => 'ground-spa-clip-circular-grass-fade-v4';
   mat.needsUpdate = true;
 }
 
@@ -2152,86 +2161,85 @@ function createProceduralGrassTexture(renderer) {
   ctx.fillStyle = '#78945f';
   ctx.fillRect(0, 0, size, size);
 
-  // Large-scale macro variation. These patches deliberately exceed the final
-  // texture repeat scale so visible striping and tile seams are broken up.
-  for (let i = 0; i < 170; i++) {
-    const x = rand() * size;
-    const y = rand() * size;
-    const rx = 60 + rand() * 220;
-    const ry = 45 + rand() * 180;
-    const angle = rand() * Math.PI;
-
-    ctx.save();
-    ctx.translate(x, y);
-    ctx.rotate(angle);
-    ctx.scale(1, ry / rx);
-
-    const gradient = ctx.createRadialGradient(0, 0, 0, 0, 0, rx);
-    const pick = rand();
-    gradient.addColorStop(
-      0,
-      pick < 0.45
-        ? 'rgba(49,82,38,0.22)'
-        : pick < 0.8
-          ? 'rgba(151,169,96,0.20)'
-          : 'rgba(139,119,73,0.13)'
-    );
-    gradient.addColorStop(1, 'rgba(100,130,70,0)');
-    ctx.fillStyle = gradient;
-    ctx.fillRect(-rx, -rx, rx * 2, rx * 2);
-    ctx.restore();
-  }
-
-  // Fine mottled colour noise.
+  /*
+   * Fine-grain lawn colour only.
+   *
+   * The previous texture contained very large radial macro patches. Once the
+   * texture was projected over the full ground footprint, those patches read
+   * as large checkerboard tiles. Large-scale variation is now handled in the
+   * existing world-space ground shader, which does not repeat with the UV map.
+   */
   const image = ctx.getImageData(0, 0, size, size);
   const data = image.data;
+
   for (let i = 0; i < data.length; i += 4) {
-    const variation = (rand() - 0.5) * 15;
-    data[i] = Math.max(0, Math.min(255, data[i] + variation * 0.45));
-    data[i + 1] = Math.max(0, Math.min(255, data[i + 1] + variation));
-    data[i + 2] = Math.max(0, Math.min(255, data[i + 2] + variation * 0.35));
+    const fine = (rand() - 0.5) * 18;
+    const medium = (rand() - 0.5) * 7;
+
+    data[i] = Math.max(
+      0,
+      Math.min(255, data[i] + fine * 0.42 + medium * 0.25)
+    );
+    data[i + 1] = Math.max(
+      0,
+      Math.min(255, data[i + 1] + fine + medium * 0.55)
+    );
+    data[i + 2] = Math.max(
+      0,
+      Math.min(255, data[i + 2] + fine * 0.30)
+    );
   }
+
   ctx.putImageData(image, 0, 0);
 
-  // Random short fibres in mixed directions to avoid directional repeating lines.
+  // Short fibres in random directions. No dominant direction means no long
+  // visible stripes when the texture is viewed at a grazing camera angle.
   ctx.lineCap = 'round';
-  for (let i = 0; i < 56000; i++) {
+
+  for (let i = 0; i < 72000; i++) {
     const x = rand() * size;
     const y = rand() * size;
-    const length = 0.8 + rand() * 4.0;
+    const length = 0.7 + rand() * 3.8;
     const angle = rand() * Math.PI * 2;
-    const alpha = 0.035 + rand() * 0.11;
+    const alpha = 0.035 + rand() * 0.10;
 
     ctx.strokeStyle = rand() < 0.58
-      ? `rgba(40,79,34,${alpha})`
-      : `rgba(161,179,105,${alpha * 0.78})`;
-    ctx.lineWidth = 0.4 + rand() * 0.6;
+      ? `rgba(39,77,33,${alpha})`
+      : `rgba(163,181,108,${alpha * 0.76})`;
+
+    ctx.lineWidth = 0.38 + rand() * 0.58;
     ctx.beginPath();
     ctx.moveTo(x, y);
-    ctx.lineTo(x + Math.cos(angle) * length, y + Math.sin(angle) * length);
+    ctx.lineTo(
+      x + Math.cos(angle) * length,
+      y + Math.sin(angle) * length
+    );
     ctx.stroke();
   }
 
   const texture = new THREE.CanvasTexture(canvas);
-  texture.name = 'Macro-micro procedural lawn';
+  texture.name = 'Fine repeating procedural lawn';
   texture.colorSpace = THREE.SRGBColorSpace;
   texture.wrapS = THREE.RepeatWrapping;
   texture.wrapT = THREE.RepeatWrapping;
 
-  // Larger mapping scale than before to reduce visible repetition.
-  texture.repeat.set(0.07, 0.07);
+  // ShapeGeometry UVs are normalised over the complete ground footprint.
+  // A high repeat gives approximately turf-scale detail rather than one
+  // stretched image across the entire landscape.
+  texture.repeat.set(48, 48);
+
   texture.minFilter = THREE.LinearMipmapLinearFilter;
   texture.magFilter = THREE.LinearFilter;
   texture.generateMipmaps = true;
-  texture.anisotropy = Math.min(
-    16,
-    renderer?.capabilities?.getMaxAnisotropy?.() || 1
-  );
+  texture.anisotropy =
+    renderer?.capabilities?.getMaxAnisotropy?.() || 1;
+
+  // Slightly favour the sharper mip level at oblique viewing angles.
+  texture.userData.mipBias = -0.35;
   texture.needsUpdate = true;
+
   return texture;
 }
-
-
 
 const GRASS_PAVING_HARD_CLEARANCE = 0.24;
 const GRASS_PAVING_FADE_DISTANCE = 1.45;
@@ -2650,7 +2658,9 @@ export async function initScene() {
   // Ground plane
   // NOTE: Your app cuts the void using updateGroundVoid(). Keep this mesh stable.
   // -------------------------
-  const groundGeo = new THREE.PlaneGeometry(24, 24, 1, 1);
+  const groundGeo = new THREE.PlaneGeometry(24, 24, 128, 128);
+  groundGeo.computeVertexNormals();
+  groundGeo.normalizeNormals();
 
   // -------------------------
   // Ground material: Studio floor (neutral, slightly rough)
@@ -2665,7 +2675,8 @@ export async function initScene() {
     envMapIntensity: 0.12,
     transparent: true,
     alphaTest: 0.015,
-    depthWrite: true
+    depthWrite: true,
+    flatShading: false
   });
 
   const ground = new THREE.Mesh(groundGeo, groundMat);
@@ -3091,9 +3102,22 @@ export function updateGroundVoid(ground, poolGroup, spaGroup = null) {
   // spa placements do not create invalid ShapeGeometry holes across the pool.
   groundShape.holes = [new THREE.Path(holePts)];
 
-  const newGeo = new THREE.ShapeGeometry(groundShape);
+  // The ground remains geometrically flat, but a denser circular outline and
+  // explicitly recomputed smooth normals prevent triangulation boundaries from
+  // becoming visible under low-angle lighting.
+  const newGeo = new THREE.ShapeGeometry(groundShape, 256);
+  newGeo.deleteAttribute('normal');
+  newGeo.computeVertexNormals();
+  newGeo.normalizeNormals();
+
+  if (newGeo.attributes?.normal) {
+    newGeo.attributes.normal.needsUpdate = true;
+  }
+
   ground.geometry.dispose();
   ground.geometry = newGeo;
+  ground.material.flatShading = false;
+  ground.material.needsUpdate = true;
 
   const fadeUniforms = ground.material?.userData?.spaClipUniforms;
   if (fadeUniforms?.groundFadeCenter && fadeUniforms?.groundFadeRadius) {
